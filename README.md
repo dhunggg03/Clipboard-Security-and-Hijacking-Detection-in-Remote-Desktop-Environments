@@ -1,94 +1,109 @@
-# Clipboard-Security-and-Hijacking-Detection-in-Remote-Desktop-Environments
-A real-time in-memory monitoring tool to detect and prevent clipboard sniffing and hijacking attacks in RDP and virtualized environments
+# Remote Clipboard Security & Hijacking Detector
 
+An in-memory monitoring and security tool designed to detect and prevent
+clipboard sniffing and hijacking attacks in Remote Desktop Protocol (RDP) and
+virtualized environments.
 
-# Clipboard Security and Hijacking Detection in Remote Desktop Environments
+**Scope:** This detector targets Windows RDP clients
+(`AddClipboardFormatListener` is a Win32-specific API). Linux/macOS clipboard
+hooking would require a separate implementation and isn't covered here.
 
-An open-source clipboard broker that detects remote clipboard hijacking and
-gates data leakage in RDP / VM clipboard-sharing sessions.
+## 📌 Problem Context
 
-## Background
+While Clipboard Redirection in RDP/VirtualBox enables convenient
+cross-machine data sharing, it introduces a major security risk. Attackers
+or malicious background processes on a remote machine can leverage system
+APIs to silently sniff sensitive data (crypto wallet addresses, resident
+numbers, card details) or hijack copied contents in real-time. Standard
+antivirus solutions often miss these fileless/in-memory techniques because
+they rely on legitimate OS functionality.
 
-RDP and VM clipboard redirection share one clipboard per session and sync it
-automatically and continuously — whatever you copy locally is transferred to
-the remote host right away, filtered only by a blacklist of formats rather
-than an explicit allowlist. That means clipboard content can be read or
-overwritten by the other end of the session without the user ever pressing
-paste.
+This isn't a hypothetical risk — a documented flaw (CVE-2016-3066) in
+spice-gtk caused RDP/VM clients to auto-sync the local clipboard to the
+remote guest instantly, even without window focus, and academic research has
+shown clipboard hijacking executed remotely over RDP/virtualization sessions
+with no malware installed on the victim's machine at all.
 
-## Related work
+## 🛠️ Key Features
 
-- **CVE-2016-3066** — spice-gtk (virt-viewer, virt-manager, GNOME Boxes)
-  auto-synced the local clipboard to the remote guest instantly, even without
-  window focus.
-- Academic research has demonstrated clipboard hijacking executed remotely
-  over RDP/virtualization sessions with no malware installed on the victim's
-  machine.
-- **Qubes OS** takes the opposite design stance: copying between VMs requires
-  an explicit key combo, and the clipboard clears itself right after — this
-  project's confirmation gate is inspired by that model.
+- **Real-Time Clipboard Listener** — monitors OS clipboard format events
+  using Win32 APIs (`AddClipboardFormatListener`) without high CPU overhead.
+- **Sensitive Data Pattern Matching (Regex)** — identifies sensitive formats
+  such as crypto wallets (BTC, ETH), credit card numbers, and Resident
+  Registration Numbers (RRN/ARC).
+- **Integrity & Anomaly-Aware Hijack Detection** — computes SHA-256 hash
+  signatures on copy events and flags changes that occur **without a
+  corresponding local user copy action** (see note below), rather than
+  claiming to identify the remote channel directly.
+- **Instant Mitigation & Alerting** — displays real-time alerts and restores
+  the clean clipboard state upon detecting suspicious swap behavior.
 
-## Threat model
+> **Design note on "remote" detection:** a generic clipboard-change event
+> alone doesn't tell you *which side* of an RDP session changed the
+> clipboard. This tool detects **unattributed changes** — clipboard content
+> changing without a preceding local copy action (e.g. no Ctrl+C / explicit
+> copy from a focused local window) — which is a reliable, honest signal for
+> anomalous behavior regardless of whether the actual source is remote
+> malware, a background process, or the RDP redirection channel itself. See
+> **Future Work** for a more precise, channel-level approach.
 
-- **Attacker:** a malicious or compromised remote host/guest on the other end
-  of an RDP/VM session.
-- **Capability:** read or overwrite the shared clipboard without the victim
-  ever pasting.
-- **Out of scope:** cross-device cloud clipboard sync (Cloud Clipboard /
-  Universal Clipboard) and app-level clipboard snooping — left for future
-  work.
+## 📂 Repository Structure
 
-## System architecture
-
-| Component        | Role                                                                 |
-|-------------------|-----------------------------------------------------------------------|
-| Classifier        | Flags sensitive content — secrets, keys, high-entropy strings, wallet/account-shaped values |
-| Sync gate         | Blocks silent auto-sync of flagged content across the RDP boundary; requires explicit confirmation |
-| Hijack detector   | Flags a sensitive value being replaced by a different one within a short window, unprompted |
-| Audit log         | Records what was flagged, blocked, or allowed, and when              |
-
-## Installation
-
-```bash
-pip install -r requirements.txt
+```
+requirements.txt        Python dependencies
+src-detector/           Main defense tool running on Host
+├── main.py             System tray & GUI entry point
+├── clipboard_listener.py   Win32 API listener
+├── regex_patterns.py       Pattern definitions for sensitive data
+└── integrity_checker.py    Hash comparison & anomaly detection logic
+poc-attack/             Proof of Concept scripts
+└── remote_hijack.py    Simulated attacker script
 ```
 
-## Usage
+## ⚠️ Responsible Use Notice
 
-```bash
-# interactive: prompts before syncing anything flagged
-python clipboard_broker.py
+`poc-attack/remote_hijack.py` simulates a clipboard-hijacking attacker for
+demonstration and testing purposes only. Run it only against your own local
+machine or an isolated lab VM you control. Do not run it against any system
+you don't own or have explicit permission to test.
 
-# unattended demo: simulates a hijack and a leak so you can see both
-# detections fire without any manual input
-python clipboard_broker.py --simulate
-```
+## 🚀 Quick Start
 
-Detections and gate decisions are written to `clipboard_audit.log`.
+1. Clone the repository and install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. Run the defense tool on the Host:
+   ```bash
+   python src-detector/main.py
+   ```
+3. (Optional, in an isolated lab VM only) Run the simulated attack to see
+   detection in action:
+   ```bash
+   python poc-attack/remote_hijack.py
+   ```
 
-## Evaluation
+## 🧪 Evaluation
 
-- **False positives** — run normal clipboard traffic (code, URLs, prose)
-  through the classifier and confirm it stays quiet.
-- **True positives** — the `--simulate` flag triggers a scripted address swap
-  (hijack) and a scripted secret copy (leak); confirm both are caught.
-- **Usability** — track how often the confirmation prompt interrupts normal,
-  safe copy/paste.
+- **False positives** — copy normal content (URLs, code, prose) with the
+  detector running; confirm no alerts fire.
+- **True positives** — run `poc-attack/remote_hijack.py` against the Host
+  while `main.py` is active; confirm the swap is detected and the
+  alert/restore fires.
+- **Detection latency** — measure the time between the simulated swap and
+  the alert firing, to show the listener is event-driven and near-instant
+  rather than eventually-consistent.
 
-## Implementation notes
+## 🔭 Future Work
 
-This MVP watches the local clipboard and simulates the RDP sync boundary with
-an in-terminal confirmation prompt, rather than hooking into a real RDP
-client's clipboard channel. That's a reasonable, clearly-scoped limitation
-for a course project — see Future Work.
-
-## Future work
-
-- Hook directly into a real RDP client's clipboard channel (e.g. FreeRDP)
-  instead of simulating the sync boundary.
-- Extend the same classifier/gate model to cross-device cloud clipboard sync.
-- Publish the classifier as a standalone, reusable module.
+- Hook the RDP virtual channel directly (e.g. via FreeRDP's client APIs for
+  the `cliprdr` channel) to get a genuine signal for "this change came
+  through the RDP redirection channel" rather than inferring it from the
+  absence of a local copy action.
+- Extend detection to cross-device cloud clipboard sync (Cloud Clipboard /
+  Universal Clipboard) as a related but separate threat surface.
+- Cross-platform support (Linux/macOS clipboard hooking).
 
 ## License
 
-MIT (suggested — change if your course requires otherwise).
+MIT 

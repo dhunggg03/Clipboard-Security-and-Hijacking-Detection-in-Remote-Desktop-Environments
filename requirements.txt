@@ -1,0 +1,4 @@
+pyperclip>=1.8.2
+customtkinter>=5.2.0
+pynput>=1.7.6
+pywin32>=306  # required by poc-attack/remote_hijack.py (win32clipboard)

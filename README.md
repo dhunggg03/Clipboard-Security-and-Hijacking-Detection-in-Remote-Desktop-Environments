@@ -116,4 +116,4 @@ you don't own or have explicit permission to test.
 
 ## License
 
-MIT (suggested — change if your course requires otherwise).
+MIT 
